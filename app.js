@@ -161,7 +161,7 @@ const cajaTotalAthSpan = document.getElementById("cajaTotalAth");
 const cajaTotalCardSpan = document.getElementById("cajaTotalCard");
 const cajaTotalAllSpan = document.getElementById("cajaTotalAll");
 
-// agenda
+// agenda (formulario)
 const agendaDateInput = document.getElementById("agendaDate");
 const agendaTimeInput = document.getElementById("agendaTime");
 const agendaBarberSelect = document.getElementById("agendaBarber");
@@ -172,6 +172,12 @@ const agendaAddBtn = document.getElementById("agendaAddBtn");
 const agendaClearBtn = document.getElementById("agendaClearBtn");
 const agendaTableBody = document.getElementById("agendaTableBody");
 const calendarWarning = document.getElementById("calendarWarning");
+
+// agenda (FILTROS de fecha)
+const agendaFilterStartInput = document.getElementById("agendaFilterStart");
+const agendaFilterEndInput = document.getElementById("agendaFilterEnd");
+const agendaFilterApplyBtn = document.getElementById("agendaFilterApplyBtn");
+const agendaFilterClearBtn = document.getElementById("agendaFilterClearBtn");
 
 // config / branding
 const logoUrlInput = document.getElementById("logoUrlInput");
@@ -367,7 +373,6 @@ function startTicketsListener() {
         renderTicketNumber();
         renderTicketsTable();
         computeCajaTotals();
-        // refrescar comisiones también
         renderCommissions();
       },
       (err) => {
@@ -389,7 +394,6 @@ function startBarbersListener() {
       const arr = [];
       snap.forEach((doc) => arr.push({ id: doc.id, ...doc.data() }));
       if (arr.length === 0) {
-        // si no hay, usamos defaults en memoria
         if (!state.barbers || state.barbers.length === 0) {
           state.barbers = getDefaultBarbers();
         }
@@ -415,21 +419,19 @@ function startAgendaListener() {
   const col = agendaCollectionRef();
   if (!col) return;
 
-  state.unsubscribeAgenda = col
-    .orderBy("date", "asc")
-    .orderBy("time", "asc")
-    .onSnapshot(
-      (snap) => {
-        const arr = [];
-        snap.forEach((doc) => arr.push({ id: doc.id, ...doc.data() }));
-        state.agenda = arr;
-        saveState();
-        renderAgendaTable();
-      },
-      (err) => {
-        console.error("onSnapshot agenda error", err);
-      }
-    );
+  // Sin orderBy para evitar problemas de índice. Ordenamos en el cliente.
+  state.unsubscribeAgenda = col.onSnapshot(
+    (snap) => {
+      const arr = [];
+      snap.forEach((doc) => arr.push({ id: doc.id, ...doc.data() }));
+      state.agenda = arr;
+      saveState();
+      renderAgendaTable();
+    },
+    (err) => {
+      console.error("onSnapshot agenda error", err);
+    }
+  );
 }
 
 async function signInWithGoogle() {
@@ -909,7 +911,6 @@ async function handleBarberSave() {
   }
 
   try {
-    // Editar
     if (currentBarberId) {
       await col.doc(currentBarberId).set(
         { name, percent },
@@ -1020,41 +1021,58 @@ function isSlotDisabled(dateStr, timeStr) {
 
 function resetAgendaForm() {
   const today = new Date().toISOString().slice(0, 10);
-  agendaDateInput.value = today;
-  agendaTimeInput.value = "";
-  agendaBarberSelect.value = "";
-  agendaStatusSelect.value = "Pendiente";
-  agendaClientInput.value = "";
-  agendaServiceInput.value = "";
-  calendarWarning.textContent = "";
+  if (agendaDateInput) agendaDateInput.value = today;
+  if (agendaTimeInput) agendaTimeInput.value = "";
+  if (agendaBarberSelect) agendaBarberSelect.value = "";
+  if (agendaStatusSelect) agendaStatusSelect.value = "Pendiente";
+  if (agendaClientInput) agendaClientInput.value = "";
+  if (agendaServiceInput) agendaServiceInput.value = "";
+  if (calendarWarning) calendarWarning.textContent = "";
   currentAgendaId = null;
+}
+
+/* 🔎 FILTRO LOCAL DE AGENDA POR RANGO DE FECHAS */
+function getFilteredAgenda() {
+  if (!state.agenda) return [];
+
+  const start = agendaFilterStartInput?.value || "";
+  const end = agendaFilterEndInput?.value || "";
+
+  return state.agenda.filter((c) => {
+    if (!c.date) return false;
+    if (start && c.date < start) return false;
+    if (end && c.date > end) return false;
+    return true;
+  });
 }
 
 function renderAgendaTable() {
   if (!agendaTableBody) return;
-  agendaTableBody.innerHTML = "";
-  state.agenda
+
+  const list = getFilteredAgenda()
     .slice()
     .sort((a, b) => {
       const ad = (a.date || "") + (a.time || "");
       const bd = (b.date || "") + (b.time || "");
       return ad.localeCompare(bd);
-    })
-    .forEach((cita) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${cita.date || ""}</td>
-        <td>${cita.time || ""}</td>
-        <td>${cita.barber || ""}</td>
-        <td>${cita.client || ""}</td>
-        <td>${cita.service || ""}</td>
-        <td>${cita.status || ""}</td>
-        <td>
-          <button class="btn-table delete" data-id="${cita.id}">X</button>
-        </td>
-      `;
-      agendaTableBody.appendChild(tr);
     });
+
+  agendaTableBody.innerHTML = "";
+  list.forEach((cita) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${cita.date || ""}</td>
+      <td>${cita.time || ""}</td>
+      <td>${cita.barber || ""}</td>
+      <td>${cita.client || ""}</td>
+      <td>${cita.service || ""}</td>
+      <td>${cita.status || ""}</td>
+      <td>
+        <button class="btn-table delete" data-id="${cita.id}">X</button>
+      </td>
+    `;
+    agendaTableBody.appendChild(tr);
+  });
 }
 
 async function saveAgendaItem() {
@@ -1075,8 +1093,32 @@ async function saveAgendaItem() {
     return;
   }
 
+  // ⛔ Validar día/hora deshabilitados
   if (isSlotDisabled(date, time)) {
     calendarWarning.textContent = "Este día u hora está deshabilitado en la configuración.";
+    return;
+  }
+
+  // ⛔ Evitar pisar horas para el mismo barbero
+  // Comparamos contra las citas ya cargadas en state.agenda
+  const conflict = state.agenda.some((cita) => {
+    // si en el futuro agregas edición de citas, evitamos comparar con la misma
+    const sameDoc = currentAgendaId && cita.id === currentAgendaId;
+    if (sameDoc) return false;
+
+    const sameDate = cita.date === date;
+    const sameTime = cita.time === time;
+    const sameBarber = cita.barber === barber;
+
+    // opcional: ignorar canceladas
+    const isCanceled = cita.status === "Cancelada";
+
+    return sameDate && sameTime && sameBarber && !isCanceled;
+  });
+
+  if (conflict) {
+    calendarWarning.textContent =
+      "Ya existe una cita para este barbero en esa fecha y hora. Elige otro horario.";
     return;
   }
 
@@ -1109,29 +1151,6 @@ async function saveAgendaItem() {
     console.error("Error guardando cita", e);
     calendarWarning.textContent = "No se pudo guardar la cita.";
   }
-}
-
-if (agendaTableBody) {
-  agendaTableBody.addEventListener("click", async (e) => {
-    const btn = e.target.closest("button.delete");
-    if (!btn) return;
-    const id = btn.getAttribute("data-id");
-    if (!id) return;
-    if (!state.user) {
-      alert("Conéctate con Google para eliminar citas.");
-      return;
-    }
-    const ok = confirm("¿Eliminar esta cita?");
-    if (!ok) return;
-    try {
-      const col = agendaCollectionRef();
-      if (!col) throw new Error("No hay colección de agenda.");
-      await col.doc(id).delete();
-    } catch (err) {
-      console.error("Error eliminando cita", err);
-      alert("No se pudo eliminar la cita.");
-    }
-  });
 }
 
 /* ========== COMISIONES ========== */
@@ -1383,7 +1402,7 @@ if (barberCancelEditBtn) {
   });
 }
 
-// Agenda: guardar / limpiar
+// Agenda: guardar / limpiar formulario
 if (agendaAddBtn) {
   agendaAddBtn.addEventListener("click", (e) => {
     e.preventDefault();
@@ -1395,6 +1414,24 @@ if (agendaClearBtn) {
   agendaClearBtn.addEventListener("click", (e) => {
     e.preventDefault();
     resetAgendaForm();
+  });
+}
+
+// Agenda: filtros de fecha
+if (agendaFilterApplyBtn) {
+  agendaFilterApplyBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    renderAgendaTable();
+  });
+}
+
+if (agendaFilterClearBtn) {
+  agendaFilterClearBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const today = new Date().toISOString().slice(0, 10);
+    if (agendaFilterStartInput) agendaFilterStartInput.value = today;
+    if (agendaFilterEndInput) agendaFilterEndInput.value = today;
+    renderAgendaTable();
   });
 }
 
@@ -1428,11 +1465,18 @@ function init() {
   cajaEndInput.value = today;
   computeCajaTotals();
 
+  // Filtros de agenda por defecto: hoy
+  if (agendaFilterStartInput && agendaFilterEndInput) {
+    agendaFilterStartInput.value = today;
+    agendaFilterEndInput.value = today;
+  }
+
   resetFormForNewTicket();
   resetAgendaForm();
   renderBarbersTable();
   loadBarbersIntoSelects();
   renderCommissions();
+  renderAgendaTable();
 
   setActivePage("dashboard");
   showPinScreen();
