@@ -415,19 +415,21 @@ function startAgendaListener() {
   const col = agendaCollectionRef();
   if (!col) return;
 
-  // 👇 Sin orderBy para evitar problemas de índice
-  state.unsubscribeAgenda = col.onSnapshot(
-    (snap) => {
-      const arr = [];
-      snap.forEach((doc) => arr.push({ id: doc.id, ...doc.data() }));
-      state.agenda = arr;
-      saveState();
-      renderAgendaTable();
-    },
-    (err) => {
-      console.error("onSnapshot agenda error", err);
-    }
-  );
+  state.unsubscribeAgenda = col
+    .orderBy("date", "asc")
+    .orderBy("time", "asc")
+    .onSnapshot(
+      (snap) => {
+        const arr = [];
+        snap.forEach((doc) => arr.push({ id: doc.id, ...doc.data() }));
+        state.agenda = arr;
+        saveState();
+        renderAgendaTable();
+      },
+      (err) => {
+        console.error("onSnapshot agenda error", err);
+      }
+    );
 }
 
 async function signInWithGoogle() {
